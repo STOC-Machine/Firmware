@@ -60,12 +60,11 @@
 #include <uORB/topics/vehicle_land_detected.h>
 #include <uORB/topics/vehicle_rates_setpoint.h>
 #include <uORB/topics/vehicle_status.h>
-#include <vtol_att_control/vtol_type.h>
 
 using matrix::Eulerf;
 using matrix::Quatf;
 
-using uORB::Subscription;
+using uORB::SubscriptionData;
 
 class FixedwingAttitudeControl final : public ModuleBase<FixedwingAttitudeControl>
 {
@@ -123,7 +122,7 @@ private:
 	vehicle_rates_setpoint_s		_rates_sp {};		/* attitude rates setpoint */
 	vehicle_status_s			_vehicle_status {};	/**< vehicle status */
 
-	Subscription<airspeed_s>			_airspeed_sub;
+	SubscriptionData<airspeed_s>			_airspeed_sub;
 
 	perf_counter_t	_loop_perf;			/**< loop performance counter */
 	perf_counter_t	_nonfinite_input_perf;		/**< performance counter for non finite input */
@@ -132,11 +131,15 @@ private:
 	float _flaps_applied{0.0f};
 	float _flaperons_applied{0.0f};
 
+	float _airspeed_scaling{1.0f};
+
 	bool _landed{true};
 
 	float _battery_scale{1.0f};
 
 	bool _flag_control_attitude_enabled_last{false};
+
+	bool _is_tailsitter{false};
 
 	struct {
 		float p_tc;
@@ -201,8 +204,6 @@ private:
 		float flaperon_scale;			/**< Scale factor for flaperons */
 
 		float rattitude_thres;
-
-		int32_t vtol_type;			/**< VTOL type: 0 = tailsitter, 1 = tiltrotor */
 
 		int32_t bat_scale_en;			/**< Battery scaling enabled */
 		bool airspeed_disabled;
@@ -272,8 +273,6 @@ private:
 
 		param_t rattitude_thres;
 
-		param_t vtol_type;
-
 		param_t bat_scale_en;
 		param_t airspeed_mode;
 
@@ -298,5 +297,6 @@ private:
 	void		global_pos_poll();
 	void		vehicle_status_poll();
 	void		vehicle_land_detected_poll();
-	void 		get_airspeed_and_scaling(float &airspeed, float &airspeed_scaling);
+
+	float 		get_airspeed_and_update_scaling();
 };

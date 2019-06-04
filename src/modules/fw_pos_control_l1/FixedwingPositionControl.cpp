@@ -297,12 +297,21 @@ FixedwingPositionControl::parameters_update()
 void
 FixedwingPositionControl::vehicle_control_mode_poll()
 {
-	bool updated;
+	bool updated = false;
 
 	orb_check(_control_mode_sub, &updated);
 
 	if (updated) {
-		orb_copy(ORB_ID(vehicle_control_mode), _control_mode_sub, &_control_mode);
+		const bool was_armed = _control_mode.flag_armed;
+
+		if (orb_copy(ORB_ID(vehicle_control_mode), _control_mode_sub, &_control_mode) == PX4_OK) {
+
+			// reset state when arming
+			if (!was_armed && _control_mode.flag_armed) {
+				reset_takeoff_state(true);
+				reset_landing_state();
+			}
+		}
 	}
 }
 
@@ -382,7 +391,8 @@ FixedwingPositionControl::airspeed_poll()
 
 		if (PX4_ISFINITE(as.indicated_airspeed_m_s)
 		    && PX4_ISFINITE(as.true_airspeed_m_s)
-		    && (as.indicated_airspeed_m_s > 0.0f)) {
+		    && (as.indicated_airspeed_m_s > 0.0f)
+		    && !_vehicle_status.aspd_use_inhibit) {
 
 			airspeed_valid = true;
 
@@ -422,7 +432,7 @@ FixedwingPositionControl::vehicle_attitude_poll()
 
 	// if the vehicle is a tailsitter we have to rotate the attitude by the pitch offset
 	// between multirotor and fixed wing flight
-	if (_parameters.vtol_type == vtol_type::TAILSITTER && _vehicle_status.is_vtol) {
+	if (static_cast<vtol_type>(_parameters.vtol_type) == vtol_type::TAILSITTER && _vehicle_status.is_vtol) {
 		Dcmf R_offset = Eulerf(0, M_PI_2_F, 0);
 		_R_nb = _R_nb * R_offset;
 	}
@@ -774,6 +784,11 @@ FixedwingPositionControl::update_desired_altitude(float dt)
 bool
 FixedwingPositionControl::in_takeoff_situation()
 {
+	// a VTOL does not need special takeoff handling
+	if (_vehicle_status.is_vtol) {
+		return false;
+	}
+
 	// in air for < 10s
 	const hrt_abstime delta_takeoff = 10_s;
 
@@ -788,9 +803,6 @@ FixedwingPositionControl::do_takeoff_help(float *hold_altitude, float *pitch_lim
 	if (in_takeoff_situation()) {
 		*hold_altitude = _takeoff_ground_alt + _parameters.climbout_diff;
 		*pitch_limit_min = radians(10.0f);
-
-	} else {
-		*pitch_limit_min = _parameters.pitch_limit_min;
 	}
 }
 
@@ -1032,10 +1044,10 @@ FixedwingPositionControl::control_position(const Vector2f &curr_pos, const Vecto
 		/* update desired altitude based on user pitch stick input */
 		bool climbout_requested = update_desired_altitude(dt);
 
-		/* if we assume that user is taking off then help by demanding altitude setpoint well above ground
-		* and set limit to pitch angle to prevent stearing into ground
-		*/
-		float pitch_limit_min{0.0f};
+		// if we assume that user is taking off then help by demanding altitude setpoint well above ground
+		// and set limit to pitch angle to prevent steering into ground
+		// this will only affect planes and not VTOL
+		float pitch_limit_min = _parameters.pitch_limit_min;
 		do_takeoff_help(&_hold_alt, &pitch_limit_min);
 
 		/* throttle limiting */
@@ -1134,10 +1146,10 @@ FixedwingPositionControl::control_position(const Vector2f &curr_pos, const Vecto
 		/* update desired altitude based on user pitch stick input */
 		bool climbout_requested = update_desired_altitude(dt);
 
-		/* if we assume that user is taking off then help by demanding altitude setpoint well above ground
-		* and set limit to pitch angle to prevent stearing into ground
-		*/
-		float pitch_limit_min{0.0f};
+		// if we assume that user is taking off then help by demanding altitude setpoint well above ground
+		// and set limit to pitch angle to prevent steering into ground
+		// this will only affect planes and not VTOL
+		float pitch_limit_min = _parameters.pitch_limit_min;
 		do_takeoff_help(&_hold_alt, &pitch_limit_min);
 
 		/* throttle limiting */
@@ -1870,10 +1882,10 @@ FixedwingPositionControl::run()
 }
 
 void
-FixedwingPositionControl::reset_takeoff_state()
+FixedwingPositionControl::reset_takeoff_state(bool force)
 {
 	// only reset takeoff if !armed or just landed
-	if (!_control_mode.flag_armed || (_was_in_air && _vehicle_land_detected.landed)) {
+	if (!_control_mode.flag_armed || (_was_in_air && _vehicle_land_detected.landed) || force) {
 
 		_runway_takeoff.reset();
 
@@ -1992,7 +2004,7 @@ FixedwingPositionControl::tecs_update_pitch_throttle(float alt_sp, float airspee
 
 	// tailsitters use the multicopter frame as reference, in fixed wing
 	// we need to use the fixed wing frame
-	if (_parameters.vtol_type == vtol_type::TAILSITTER && _vehicle_status.is_vtol) {
+	if (static_cast<vtol_type>(_parameters.vtol_type) == vtol_type::TAILSITTER && _vehicle_status.is_vtol) {
 		float tmp = accel_body(0);
 		accel_body(0) = -accel_body(2);
 		accel_body(2) = tmp;

@@ -125,6 +125,8 @@ void LandDetector::_cycle()
 	const bool ground_contactDetected = (_state == LandDetectionState::GROUND_CONTACT);
 	const float alt_max = _get_max_altitude() > 0.0f ? _get_max_altitude() : INFINITY;
 
+	const bool in_ground_effect = _ground_effect_hysteresis.get_state();
+
 	const hrt_abstime now = hrt_absolute_time();
 
 	// publish at 1 Hz, very first time, or when the result has changed
@@ -134,6 +136,7 @@ void LandDetector::_cycle()
 	    (_landDetected.freefall != freefallDetected) ||
 	    (_landDetected.maybe_landed != maybe_landedDetected) ||
 	    (_landDetected.ground_contact != ground_contactDetected) ||
+	    (_landDetected.in_ground_effect != in_ground_effect) ||
 	    (fabsf(_landDetected.alt_max - alt_max) > FLT_EPSILON)) {
 
 		if (!landDetected && _landDetected.landed) {
@@ -147,6 +150,7 @@ void LandDetector::_cycle()
 		_landDetected.maybe_landed = maybe_landedDetected;
 		_landDetected.ground_contact = ground_contactDetected;
 		_landDetected.alt_max = alt_max;
+		_landDetected.in_ground_effect = in_ground_effect;
 
 		int instance;
 		orb_publish_auto(ORB_ID(vehicle_land_detected), &_landDetectedPub, &_landDetected,
@@ -203,10 +207,12 @@ void LandDetector::_update_state()
 {
 	/* when we are landed we also have ground contact for sure but only one output state can be true at a particular time
 	 * with higher priority for landed */
-	_freefall_hysteresis.set_state_and_update(_get_freefall_state());
-	_landed_hysteresis.set_state_and_update(_get_landed_state());
-	_maybe_landed_hysteresis.set_state_and_update(_get_maybe_landed_state());
-	_ground_contact_hysteresis.set_state_and_update(_get_ground_contact_state());
+	const hrt_abstime now_us = hrt_absolute_time();
+	_freefall_hysteresis.set_state_and_update(_get_freefall_state(), now_us);
+	_landed_hysteresis.set_state_and_update(_get_landed_state(), now_us);
+	_maybe_landed_hysteresis.set_state_and_update(_get_maybe_landed_state(), now_us);
+	_ground_contact_hysteresis.set_state_and_update(_get_ground_contact_state(), now_us);
+	_ground_effect_hysteresis.set_state_and_update(_get_ground_effect_state(), now_us);
 
 	if (_freefall_hysteresis.get_state()) {
 		_state = LandDetectionState::FREEFALL;

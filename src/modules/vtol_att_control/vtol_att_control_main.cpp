@@ -89,16 +89,18 @@ VtolAttitudeControl::VtolAttitudeControl()
 	_params_handles.diff_thrust = param_find("VT_FW_DIFTHR_EN");
 	_params_handles.diff_thrust_scale = param_find("VT_FW_DIFTHR_SC");
 
+	_params_handles.v19_vt_rolldir = param_find("V19_VT_ROLLDIR");
+
 	/* fetch initial parameter values */
 	parameters_update();
 
-	if (_params.vtol_type == vtol_type::TAILSITTER) {
+	if (static_cast<vtol_type>(_params.vtol_type) == vtol_type::TAILSITTER) {
 		_vtol_type = new Tailsitter(this);
 
-	} else if (_params.vtol_type == vtol_type::TILTROTOR) {
+	} else if (static_cast<vtol_type>(_params.vtol_type) == vtol_type::TILTROTOR) {
 		_vtol_type = new Tiltrotor(this);
 
-	} else if (_params.vtol_type == vtol_type::STANDARD) {
+	} else if (static_cast<vtol_type>(_params.vtol_type) == vtol_type::STANDARD) {
 		_vtol_type = new Standard(this);
 
 	} else {
@@ -497,12 +499,15 @@ VtolAttitudeControl::parameters_update()
 	// normally the parameter fw_motors_off can be used to specify this, however, since historically standard vtol code
 	// did not use the interface of the VtolType class to disable motors we will have users flying  around with a wrong
 	// parameter value. Therefore, explicitly set it here such that all motors will be disabled as expected.
-	if (_params.vtol_type == vtol_type::STANDARD) {
+	if (static_cast<vtol_type>(_params.vtol_type) == vtol_type::STANDARD) {
 		_params.fw_motors_off = 12345678;
 	}
 
 	// make sure parameters are feasible, require at least 1 m/s difference between transition and blend airspeed
 	_params.airspeed_blend = math::min(_params.airspeed_blend, _params.transition_airspeed - 1.0f);
+
+	// Bugfix for v1.9, should be removed in 1.10
+	param_get(_params_handles.v19_vt_rolldir, &_params.v19_vt_rolldir);
 
 	// update the parameters of the instances of base VtolType
 	if (_vtol_type != nullptr) {
@@ -524,7 +529,6 @@ void VtolAttitudeControl::task_main()
 	fflush(stdout);
 
 	/* do subscriptions */
-	_v_att_sp_sub          = orb_subscribe(ORB_ID(vehicle_attitude_setpoint));
 	_mc_virtual_att_sp_sub = orb_subscribe(ORB_ID(mc_virtual_attitude_setpoint));
 	_fw_virtual_att_sp_sub = orb_subscribe(ORB_ID(fw_virtual_attitude_setpoint));
 	_v_att_sub             = orb_subscribe(ORB_ID(vehicle_attitude));
@@ -567,13 +571,13 @@ void VtolAttitudeControl::task_main()
 
 		// run vtol_att on MC actuator publications, unless in full FW mode
 		switch (_vtol_type->get_mode()) {
-		case TRANSITION_TO_FW:
-		case TRANSITION_TO_MC:
-		case ROTARY_WING:
+		case mode::TRANSITION_TO_FW:
+		case mode::TRANSITION_TO_MC:
+		case mode::ROTARY_WING:
 			fds[0].fd = _actuator_inputs_mc;
 			break;
 
-		case FIXED_WING:
+		case mode::FIXED_WING:
 			fds[0].fd = _actuator_inputs_fw;
 			break;
 		}
@@ -612,13 +616,13 @@ void VtolAttitudeControl::task_main()
 
 		// reset transition command if not auto control
 		if (_v_control_mode.flag_control_manual_enabled) {
-			if (_vtol_type->get_mode() == ROTARY_WING) {
+			if (_vtol_type->get_mode() == mode::ROTARY_WING) {
 				_transition_command = vtol_vehicle_status_s::VEHICLE_VTOL_STATE_MC;
 
-			} else if (_vtol_type->get_mode() == FIXED_WING) {
+			} else if (_vtol_type->get_mode() == mode::FIXED_WING) {
 				_transition_command = vtol_vehicle_status_s::VEHICLE_VTOL_STATE_FW;
 
-			} else if (_vtol_type->get_mode() == TRANSITION_TO_MC) {
+			} else if (_vtol_type->get_mode() == mode::TRANSITION_TO_MC) {
 				/* We want to make sure that a mode change (manual>auto) during the back transition
 				 * doesn't result in an unsafe state. This prevents the instant fall back to
 				 * fixed-wing on the switch from manual to auto */
@@ -627,7 +631,7 @@ void VtolAttitudeControl::task_main()
 		}
 
 		// check in which mode we are in and call mode specific functions
-		if (_vtol_type->get_mode() == ROTARY_WING) {
+		if (_vtol_type->get_mode() == mode::ROTARY_WING) {
 
 			mc_virtual_att_sp_poll();
 
@@ -639,7 +643,7 @@ void VtolAttitudeControl::task_main()
 			// got data from mc attitude controller
 			_vtol_type->update_mc_state();
 
-		} else if (_vtol_type->get_mode() == FIXED_WING) {
+		} else if (_vtol_type->get_mode() == mode::FIXED_WING) {
 
 			fw_virtual_att_sp_poll();
 
@@ -650,7 +654,7 @@ void VtolAttitudeControl::task_main()
 
 			_vtol_type->update_fw_state();
 
-		} else if (_vtol_type->get_mode() == TRANSITION_TO_MC || _vtol_type->get_mode() == TRANSITION_TO_FW) {
+		} else if (_vtol_type->get_mode() == mode::TRANSITION_TO_MC || _vtol_type->get_mode() == mode::TRANSITION_TO_FW) {
 
 			mc_virtual_att_sp_poll();
 			fw_virtual_att_sp_poll();
@@ -658,12 +662,44 @@ void VtolAttitudeControl::task_main()
 			// vehicle is doing a transition
 			_vtol_vehicle_status.vtol_in_trans_mode = true;
 			_vtol_vehicle_status.vtol_in_rw_mode = true; //making mc attitude controller work during transition
-			_vtol_vehicle_status.in_transition_to_fw = (_vtol_type->get_mode() == TRANSITION_TO_FW);
+			_vtol_vehicle_status.in_transition_to_fw = (_vtol_type->get_mode() == mode::TRANSITION_TO_FW);
 
 			_vtol_type->update_transition_state();
 		}
 
-		_vtol_type->fill_actuator_outputs();
+		// Fill actuator output
+		if (_params.v19_vt_rolldir) {
+
+			// The mixer may not have been adapted to the roll inversion in v1.9
+			// Display error message and do not fill actuator outputs
+			// TODO: remove the parameter and this error message in v1.10
+			const int v19_rolldir_warning_throttling = 5000;
+			static int v19_rolldir_warning_counter = 0;
+			v19_rolldir_warning_counter += 1;
+
+			if ((v19_rolldir_warning_counter % v19_rolldir_warning_throttling) == 0) {
+				mavlink_log_critical(&_mavlink_log_pub,
+						     "The VTOL roll commands were inverted in v1.9!");
+				mavlink_log_critical(&_mavlink_log_pub,
+						     "Check roll mixing, then set V19_VT_ROLLDIR to 0");
+			}
+
+			// Do not fill actuator output
+			_actuators_out_0.timestamp = hrt_absolute_time();
+			_actuators_out_0.timestamp_sample = _actuators_mc_in.timestamp_sample;
+			_actuators_out_1.timestamp = hrt_absolute_time();
+			_actuators_out_1.timestamp_sample = _actuators_fw_in.timestamp_sample;
+
+			for (size_t i = 0; i < actuator_controls_s::NUM_ACTUATOR_CONTROLS; i++) {
+				_actuators_out_0.control[i] = 0.0f;
+				_actuators_out_1.control[i] = 0.0f;
+			}
+
+		} else {
+
+			// normal operation
+			_vtol_type->fill_actuator_outputs();
+		}
 
 		/* Only publish if the proper mode(s) are enabled */
 		if (_v_control_mode.flag_control_attitude_enabled ||
@@ -716,7 +752,7 @@ VtolAttitudeControl::start()
 	_control_task = px4_task_spawn_cmd("vtol_att_control",
 					   SCHED_DEFAULT,
 					   SCHED_PRIORITY_ATTITUDE_CONTROL + 1,
-					   1230,
+					   1320,
 					   (px4_main_t)&VtolAttitudeControl::task_main_trampoline,
 					   nullptr);
 
