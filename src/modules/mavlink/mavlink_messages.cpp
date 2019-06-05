@@ -2259,6 +2259,80 @@ protected:
 			msg.vx = lpos.vx * 100.0f;
 			msg.vy = lpos.vy * 100.0f;
 			msg.vz = lpos.vz * 100.0f;
+<<<<<<< HEAD
+=======
+
+			msg.hdg = math::degrees(wrap_2pi(lpos.yaw)) * 100.0f;
+
+			mavlink_msg_global_position_int_send_struct(_mavlink->get_channel(), &msg);
+
+			return true;
+		}
+
+		return false;
+	}
+};
+
+class MavlinkStreamVisionPositionEstimate : public MavlinkStream
+{
+public:
+	const char *get_name() const
+	{
+		return MavlinkStreamVisionPositionEstimate::get_name_static();
+	}
+
+	static const char *get_name_static()
+	{
+		return "VISION_POSITION_ESTIMATE";
+	}
+
+	static uint16_t get_id_static()
+	{
+		return MAVLINK_MSG_ID_VISION_POSITION_ESTIMATE;
+	}
+
+	uint16_t get_id()
+	{
+		return get_id_static();
+	}
+
+	static MavlinkStream *new_instance(Mavlink *mavlink)
+	{
+		return new MavlinkStreamVisionPositionEstimate(mavlink);
+	}
+
+	unsigned get_size()
+	{
+		return (_pos_time > 0) ? MAVLINK_MSG_ID_VISION_POSITION_ESTIMATE_LEN + MAVLINK_NUM_NON_PAYLOAD_BYTES : 0;
+	}
+private:
+
+	MavlinkOrbSubscription *_pos_sub;
+	uint64_t _pos_time;
+
+	MavlinkOrbSubscription *_att_sub;
+	uint64_t _att_time;
+
+	/* do not allow top copying this class */
+	MavlinkStreamVisionPositionEstimate(MavlinkStreamVisionPositionEstimate &) = delete;
+	MavlinkStreamVisionPositionEstimate &operator = (const MavlinkStreamVisionPositionEstimate &) = delete;
+
+protected:
+	explicit MavlinkStreamVisionPositionEstimate(Mavlink *mavlink) : MavlinkStream(mavlink),
+		_pos_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_vision_position))),
+		_pos_time(0),
+		_att_sub(_mavlink->add_orb_subscription(ORB_ID(vehicle_vision_attitude))),
+		_att_time(0)
+	{}
+
+	bool send(const hrt_abstime t)
+	{
+		vehicle_local_position_s vpos = {};
+		vehicle_attitude_s vatt = {};
+
+		bool att_updated = _att_sub->update(&_att_time, &vatt);
+		bool pos_updated = _pos_sub->update(&_pos_time, &vpos);
+>>>>>>> f13bbacd5277123d6af2cb5ed21587c220031353
 
 			msg.hdg = math::degrees(wrap_2pi(lpos.yaw)) * 100.0f;
 
